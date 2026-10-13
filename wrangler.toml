@@ -1,0 +1,10 @@
+name = "garageiq-api"
+main = "worker/index.js"
+compatibility_date = "2026-10-01"
+
+# Do not put any credentials or secrets in this file.
+# In Cloudflare Workers → Settings → Variables and Secrets, configure:
+# FIREBASE_PROJECT_ID  (plain text)
+# ALLOWED_EMAIL        (plain text)
+# SPREADSHEET_ID       (plain text)
+# GOOGLE_SERVICE_ACCOUNT_JSON (ENCRYPTED SECRET - complete service account JSON)
