@@ -75,7 +75,7 @@ function drawChart(rows){
  $("rollingControl").hidden=!rolling;
  $("chartTitle").textContent=({rolling:"Rolling MPG trend",mpg:"MPG per fill-up",price:"Fuel price trend",cost:"Fill-up cost trend"})[metric];
  const series=rolling?rollingSeries(entries(state.selected),state.rolling).filter(x=>rows.includes(x.r)):rows.filter(r=>metric!=="mpg"||eligible(r)).map(r=>({r,value:metric==="mpg"?num(r.mpg):metric==="price"?num(r.price):num(r.gallons)*num(r.price)}));
- const points=series.filter(x=>Number.isFinite(x.value)&&x.value>0&&/^\\d{4}-\\d{2}-\\d{2}$/.test(x.r.fuelup_date));
+ const points=series.filter(x=>Number.isFinite(x.value)&&x.value>0&&/^\d{4}-\d{2}-\d{2}$/.test(x.r.fuelup_date));
  if(state.chart){state.chart.destroy();state.chart=null}
  if(!window.Chart)return;
  const labels=points.map(x=>displayDate(x.r.fuelup_date)),data=points.map(x=>x.value);
