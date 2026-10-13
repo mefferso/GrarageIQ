@@ -31,5 +31,55 @@ function openForm(){if(!state.token){status("Connect Google first to save new fu
 async function save(event){event.preventDefault();if(state.busy)return;let k=$("formVehicle").value,vehicle=VEHICLES.find(x=>x.key===k),odo=num($("formOdo").value),gals=num($("formGallons").value),price=num($("formPrice").value),date=$("formDate").value,previous=maxOdo(k),miles=odo-previous,partial=$("formPartial").checked,missed=$("formMissed").checked;if(!vehicle||!/^\d{4}-\d{2}-\d{2}$/.test(date)||!(odo>0&&gals>0&&price>=0)){status("Please enter a valid date, odometer, gallons and price.",true);return}if(previous&&odo<=previous){status("New odometer must exceed the previous logged mileage ("+format(previous)+").",true);return}if(entries(k).some(r=>r.fuelup_date===date&&num(r.odometer)===odo)){status("This date and odometer are already recorded.",true);return}const mpg=previous&&!partial&&!missed?miles/gals:0;const values=[vehicle.name,vehicle.name,mpg||0,odo,previous?miles:0,gals,price,50,date,new Date().toISOString(),"",$("formNotes").value,missed?1:0,partial?1:0,"","",$("formBrand").value];state.busy=true;$("saveBtn").disabled=true;$("saveBtn").textContent="Saving…";try{ // Read again before append to avoid stale local duplicates
 const latest=parse((await request(rangeUrl(vehicle.sheet))).values);const liveMax=Math.max(0,...latest.map(r=>num(r.odometer)).filter(Number.isFinite));if(latest.some(r=>r.fuelup_date===date&&num(r.odometer)===odo))throw Error("That fuel-up already exists in Google Sheets.");if(liveMax!==previous)throw Error("Spreadsheet mileage changed. Refresh before saving to avoid an incorrect MPG.");
 const url=rangeUrl(vehicle.sheet)+":append?valueInputOption=RAW&insertDataOption=INSERT_ROWS";await request(url,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({majorDimension:"ROWS",values:[values]})});$("fuelDialog").close();await load();status("Saved "+vehicle.name+" fuel-up directly to "+vehicle.sheet+" ✔")}catch(e){status("Not saved: "+e.message,true)}finally{state.busy=false;$("saveBtn").disabled=false;$("saveBtn").textContent="Save to Google Sheets"}}
-function connect(){if(!CONFIG.googleClientId){status("Setup needed: paste your Google OAuth Web Client ID in config.js. See README.md.",true);return}if(!window.google?.accounts?.oauth2){status("Google sign-in is still loading. Try again.",true);return}if(!state.client){state.client=google.accounts.oauth2.initTokenClient({client_id:CONFIG.googleClientId,scope:"https://www.googleapis.com/auth/spreadsheets",callback:async response=>{if(response.error){status("Google authorization error: "+response.error,true);return}state.token=response.access_token;$("authBtn").textContent="Refresh connection";try{await load()}catch(e){status(e.message,true);setSync("Sync failed")}}})}state.client.requestAccessToken({prompt:state.token?"":"consent"})}
-document.addEventListener("DOMContentLoaded",()=>{$("formVehicle").replaceChildren(...VEHICLES.map(v=>{let o=document.createElement("option");o.value=v.key;o.textContent=v.name;return o}));$("authBtn").addEventListener("click",connect);$("newFillBtn").addEventListener("click",openForm);$("closeDialog").addEventListener("click",()=>$("fuelDialog").close());$("cancelBtn").addEventListener("click",()=>$("fuelDialog").close());$("fuelForm").addEventListener("submit",save);["formVehicle","formOdo","formGallons","formPrice","formPartial","formMissed"].forEach(x=>$(x).addEventListener("input",recalc));$("chartMetric").addEventListener("change",render);render();if(!CONFIG.googleClientId)setSync("OAuth setup required");if("serviceWorker"in navigator)navigator.serviceWorker.register("./sw.js").catch(()=>{})});
+// Only a non-sensitive "previously connected" flag persists across reloads.
+// OAuth access tokens remain in memory. Google controls whether silent consent reuse is possible.
+const AUTH_HINT="garageiq-google-connected";
+function oauthClient(){
+ if(!window.google?.accounts?.oauth2) return null;
+ if(!state.client)state.client=google.accounts.oauth2.initTokenClient({
+  client_id:CONFIG.googleClientId,
+  scope:"https://www.googleapis.com/auth/spreadsheets",
+  callback:async response=>{
+   if(response.error||!response.access_token){
+    setSync("Connect Google");
+    if(!state.silentAuth)status("Automatic sign-in unavailable. Click Connect Google.",true);
+    state.silentAuth=false;
+    return;
+   }
+   state.silentAuth=false;
+   state.token=response.access_token;
+   try{localStorage.setItem(AUTH_HINT,"1")}catch{}
+   $("authBtn").textContent="Reconnect Google";
+   try{await load()}catch(e){status(e.message,true);setSync("Sync failed")}
+  },
+  error_callback:()=>{
+   const silent=state.silentAuth;
+   state.silentAuth=false;
+   setSync("Connect Google");
+   if(!silent)status("Google sign-in didn't complete. Click Connect Google to retry.",true);
+  }
+ });
+ return state.client;
+}
+function connect(){
+ if(!CONFIG.googleClientId){status("Set up your Google OAuth Client ID in config.js first.",true);return}
+ const client=oauthClient();
+ if(!client){status("Google sign-in is still loading. Try again.",true);return}
+ state.silentAuth=false;
+ // Reuse existing consent without forcing Google's consent screen each time.
+ client.requestAccessToken({prompt:""});
+}
+function autoConnect(attempt=0){
+ if(!CONFIG.googleClientId)return;
+ try{if(localStorage.getItem(AUTH_HINT)!=="1")return}catch{return}
+ const client=oauthClient();
+ if(!client){
+  if(attempt<15)setTimeout(()=>autoConnect(attempt+1),300);
+  return;
+ }
+ state.silentAuth=true;
+ setSync("Restoring Google session…");
+ // This may fail where browsers require user interaction; the Connect button remains available.
+ try{client.requestAccessToken({prompt:""})}catch{state.silentAuth=false;setSync("Connect Google")}
+}
+document.addEventListener("DOMContentLoaded",()=>{$("formVehicle").replaceChildren(...VEHICLES.map(v=>{let o=document.createElement("option");o.value=v.key;o.textContent=v.name;return o}));$("authBtn").addEventListener("click",connect);$("newFillBtn").addEventListener("click",openForm);$("closeDialog").addEventListener("click",()=>$("fuelDialog").close());$("cancelBtn").addEventListener("click",()=>$("fuelDialog").close());$("fuelForm").addEventListener("submit",save);["formVehicle","formOdo","formGallons","formPrice","formPartial","formMissed"].forEach(x=>$(x).addEventListener("input",recalc));$("chartMetric").addEventListener("change",render);render();if(!CONFIG.googleClientId)setSync("OAuth setup required");else autoConnect();if("serviceWorker"in navigator)navigator.serviceWorker.register("./sw.js").catch(()=>{})});
