@@ -54,7 +54,7 @@ async function sheetsToken(env){
 }
 async function sheetsFetch(env,path,init={}){
  const access=await sheetsToken(env);
- const response=await fetch("https://sheets.googleapis.com/v4/spreadsheets/"+encodeURIComponent(env.SPREADSHEET_ID)+"/values/"+path,{...init,headers:{Authorization:"Bearer "+access,...(init.headers||{})}});
+ const response=await fetch("https://sheets.googleapis.com/v4/spreadsheets/"+encodeURIComponent(env.SPREADSHEET_ID)+"/values"+(path.startsWith(":")?"":"/")+path,{...init,headers:{Authorization:"Bearer "+access,...(init.headers||{})}});
  const result=await response.json().catch(()=>({}));
  if(!response.ok)throw Object.assign(new Error(result?.error?.message||"Google Sheets API error."),{status:response.status===403?403:502});
  return result;
