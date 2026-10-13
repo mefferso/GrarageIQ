@@ -7,7 +7,7 @@ const source=fs.readFileSync(require("node:path").join(__dirname,"../app.js"),"u
 function load(){
  const context={window:{GARAGEIQ_CONFIG:{}},document:{addEventListener(){}},Date,Number,Math};
  vm.createContext(context);
- vm.runInContext(source+"\nthis.api={weightedMpg,estimatedMpg,intervalMiles,rollingSeries,validate,inputISO,eligible,flag,parse,filtered,state};",context);
+ vm.runInContext(source+"\nthis.api={weightedMpg,estimatedMpg,intervalMiles,rollingSeries,validate,inputISO,eligible,flag,parse,filtered,state,preserveLegacyMpg,fuelSegments};",context);
  return context.api;
 }
 const row=(odometer,gallons,mpg,miles,{partial=false,missed=false,date="2026-01-01"}={})=>({
@@ -37,9 +37,16 @@ test("ineligible zero gallon does not replace partial baseline",()=>{
 });
 test("raw legacy MPG is preserved on metadata-only edit",()=>{
  const a=load(),original=row(1300,10,31.27,300);
- const changed={...original,notes:"corrected note"};
- assert.equal(changed.mpg,original.mpg);
- assert.equal(changed.miles,original.miles);
+ assert.equal(a.preserveLegacyMpg(original,{odo:1300,gals:10,partial:false,missed:false}),true);
+ assert.equal(a.preserveLegacyMpg(original,{odo:1300,gals:11,partial:false,missed:false}),false);
+});
+test("rolling segments include partial fuel without double-counting distance",()=>{
+ const a=load(),rs=[row(1000,10,25,250),row(1100,3,0,100,{partial:true}),row(1180,2,0,80,{partial:true}),row(1300,10,20,300)];
+ const segments=a.fuelSegments(rs);
+ assert.equal(segments.length,2);
+ assert.equal(segments[1].miles,300);
+ assert.equal(segments[1].gallons,15);
+ assert.equal(a.rollingSeries(rs,2)[0].value,550/25);
 });
 test("rolling 5 and 10 use full history, then period filters points",()=>{
  const a=load(),rows=Array.from({length:15},(_,i)=>row(1000+i*300,10,30+i,300,{date:i<10?"2024-01-01":"2026-01-01"}));
