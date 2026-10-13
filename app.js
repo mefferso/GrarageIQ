@@ -69,7 +69,7 @@ function openForm(r=null){
  recalc();$("fuelDialog").showModal();
 }
 function validate(v,rows,excludeRow){
- const existing=rows.filter(r=>r.__row!==excludeRow),byOdo=[...existing].sort((a,b)=>num(a.odometer)-num(b.odometer);
+ const existing=rows.filter(r=>r.__row!==excludeRow),byOdo=[...existing].sort((a,b)=>num(a.odometer)-num(b.odometer));
  const prev=byOdo.filter(r=>num(r.odometer)<v.odo).at(-1),next=byOdo.find(r=>num(r.odometer)>v.odo);
  if(!/^\d{4}-\d{2}-\d{2}$/.test(v.date)||Number.isNaN(new Date(v.date+"T12:00:00").valueOf())||!(Number.isInteger(v.odo)&&v.odo>0&&v.gals>0&&v.gals<200&&v.price>=0&&v.price<100))throw Error("Check date, whole-mile odometer, gallons (0–200), and price.");
  if(existing.some(r=>num(r.odometer)===v.odo||r.fuelup_date===v.date&&num(r.odometer)===v.odo))throw Error("Duplicate odometer entry already exists.");
