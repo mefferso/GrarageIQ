@@ -9,10 +9,10 @@
   "description": "Fuel tracking and vehicle analytics synced with Google Sheets",
   "icons": [
     {
-      "src": "./icon.svg",
+      "src": "./icon.svg?v=2",
       "sizes": "any",
       "type": "image/svg+xml",
-      "purpose": "any maskable"
+      "purpose": "any"
     }
   ]
 }
