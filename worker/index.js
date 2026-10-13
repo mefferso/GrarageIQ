@@ -34,7 +34,7 @@ async function authorized(request,env){
  const key=await crypto.subtle.importKey("jwk",jwk,{name:"RSASSA-PKCS1-v1_5",hash:"SHA-256"},false,["verify"]);
  const verified=await crypto.subtle.verify("RSASSA-PKCS1-v1_5",key,unb64(parts[2]),te.encode(parts[0]+"."+parts[1]));
  if(!verified)throw Object.assign(new Error("Invalid token signature."),{status:401});
- if(payload.email_verified!==true||String(payload.email||"").toLowerCase()!==String(env.ALLOWED_EMAIL||"").trim().toLowerCase())throw Object.assign(new Error("This Google account is not allowed to access GarageIQ."),{status:403});
+ if(payload.firebase?.sign_in_provider!=="google.com"||payload.email_verified!==true||String(payload.email||"").toLowerCase()!==String(env.ALLOWED_EMAIL||"").trim().toLowerCase())throw Object.assign(new Error("This Google account is not allowed to access GarageIQ."),{status:403});
  return payload;
 }
 async function sheetsToken(env){
