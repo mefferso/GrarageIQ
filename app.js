@@ -8,7 +8,7 @@ const VEHICLES=[
  {key:"f150",name:"Ford F-150",subtitle:"Platinum · 2013",sheet:"MPG_F150",icon:"🛻"}
 ];
 const FIELDS=["car_name","model","mpg","odometer","miles","gallons","price","city_percentage","fuelup_date","date_added","tags","notes","missed_fuelup","partial_fuelup","latitude","longitude","brand"];
-const state={token:"",client:null,selected:"bmw",entries:{bmw:[],gls:[],f150:[]},chart:null,busy:false};
+const state={token:"",client:null,selected:"bmw",entries:{bmw:[],gls:[],f150:[]},chart:null,busy:false,editing:null,period:"all",rolling:10};
 const $=id=>document.getElementById(id);
 const num=v=>v===""||v==null?NaN:Number(v);
 const money=n=>Number.isFinite(n)?n.toLocaleString("en-US",{style:"currency",currency:"USD"}):"—";
@@ -16,22 +16,101 @@ const format=n=>Number.isFinite(n)?n.toLocaleString("en-US",{maximumFractionDigi
 function status(s,error=false){$("message").textContent=s;$("message").style.color=error?"#ffb0a7":"#42dcb2"}
 function setSync(s){$("syncStatus").textContent=s}
 function isoToday(){const d=new Date();return [d.getFullYear(),String(d.getMonth()+1).padStart(2,"0"),String(d.getDate()).padStart(2,"0")].join("-")}
-function parse(rows){if(!rows?.length)return [];const header=rows[0].map(x=>String(x).trim());const indexes=Object.fromEntries(FIELDS.map(k=>[k,header.indexOf(k)]));return rows.slice(1).filter(r=>r.length&&r.some(x=>String(x).trim())).map(r=>Object.fromEntries(FIELDS.map(k=>[k,indexes[k]<0?"":(r[indexes[k]]??"")]))).sort((a,b)=>a.fuelup_date.localeCompare(b.fuelup_date)||num(a.odometer)-num(b.odometer))}
+function parse(rows){if(!rows?.length)return [];const header=rows[0].map(x=>String(x).trim());const indexes=Object.fromEntries(FIELDS.map(k=>[k,header.indexOf(k)]));return rows.slice(1).map((r,i)=>({r,i})).filter(({r})=>r.length&&r.some(x=>String(x).trim())).map(({r,i})=>({...Object.fromEntries(FIELDS.map(k=>[k,indexes[k]<0?"":(r[indexes[k]]??"")])),__row:i+2})).sort((a,b)=>a.fuelup_date.localeCompare(b.fuelup_date)||num(a.odometer)-num(b.odometer))}
 function entries(k){return state.entries[k]||[]}
-function eligible(r){return num(r.mpg)>0&&num(r.gallons)>0&&String(r.partial_fuelup)!=="1"&&String(r.missed_fuelup)!=="1"}
+function eligible(r){return num(r.mpg)>0&&num(r.gallons)>0&&!flag(r.partial_fuelup)&&!flag(r.missed_fuelup)&&num(r.miles)>0}
+function flag(v){return ["1","true","yes"].includes(String(v).toLowerCase())}
 function weightedMpg(rows){const good=rows.filter(eligible);const miles=good.reduce((t,r)=>t+(Number.isFinite(num(r.miles))?num(r.miles):0),0);const gals=good.reduce((t,r)=>t+num(r.gallons),0);return gals>0?miles/gals:NaN}
+function estimatedMpg(rows,odo,gallons,missed,partial){
+ if(missed||partial)return NaN;
+ const preceding=rows.filter(r=>num(r.odometer)<odo).sort((a,b)=>num(a.odometer)-num(b.odometer));
+ if(!preceding.length)return NaN;
+ let sum=gallons,begin=NaN;
+ for(let i=preceding.length-1;i>=0;i--){
+   const r=preceding[i];
+   if(flag(r.missed_fuelup))return NaN;
+   if(flag(r.partial_fuelup)){if(!(num(r.gallons)>0))return NaN;sum+=num(r.gallons);continue}
+   begin=num(r.odometer);break;
+ }
+ return Number.isFinite(begin)&&odo>begin&&sum>0?(odo-begin)/sum:NaN;
+}
+function filtered(rows){const p=state.period;if(p==="all")return rows;const cutoff=new Date();cutoff.setFullYear(cutoff.getFullYear()-Number(p));return rows.filter(r=>new Date(r.fuelup_date+"T12:00:00")>=cutoff)}
+function rollingSeries(rows,n){const good=rows.filter(eligible);return good.map((r,i)=>({r,value:weightedMpg(good.slice(Math.max(0,i-n+1),i+1))}))}
 function maxOdo(k){return Math.max(0,...entries(k).map(r=>num(r.odometer)).filter(Number.isFinite))}
 async function request(url,opts={}){const response=await fetch(url,{...opts,headers:{Authorization:"Bearer "+state.token,...(opts.headers||{})}});if(response.status===401){state.token="";setSync("Session expired");$("authBtn").textContent="Reconnect Google";throw Error("Google session expired. Connect again.")}const json=await response.json().catch(()=>({}));if(!response.ok)throw Error(json?.error?.message||"Google Sheets request failed");return json}
 
 function rangeUrl(sheet){return "https://sheets.googleapis.com/v4/spreadsheets/"+encodeURIComponent(SHEET_ID)+"/values/"+encodeURIComponent("'"+sheet.replace(/'/g,"''")+"'!A:Q")}
 async function load(){if(!state.token)throw Error("Connect Google first");setSync("Syncing…");const result=await Promise.all(VEHICLES.map(v=>request(rangeUrl(v.sheet))));VEHICLES.forEach((v,i)=>state.entries[v.key]=parse(result[i].values));setSync("Synced with Google Sheets");render();status("Loaded "+VEHICLES.reduce((n,v)=>n+entries(v.key).length,0)+" fuel-ups directly from your private spreadsheet.")}
-function render(){const k=state.selected,rows=entries(k);$("totalCount").textContent=format(VEHICLES.reduce((t,v)=>t+entries(v.key).length,0));const avg=weightedMpg(rows);$("avgMpg").textContent=Number.isFinite(avg)?avg.toFixed(1):"—";const spend=rows.reduce((t,r)=>t+(Number.isFinite(num(r.gallons)*num(r.price))?num(r.gallons)*num(r.price):0),0);$("fuelSpend").textContent=money(spend);$("latestOdo").textContent=maxOdo(k)?format(maxOdo(k)):"—";$("vehicles").replaceChildren(...VEHICLES.map(v=>{let data=entries(v.key),node=document.createElement("button");node.type="button";node.className="vehicle"+(v.key===k?" active":"");let mp=weightedMpg(data);node.innerHTML='<div class="carTitle"><span>'+v.name+'</span><span class="carIcon">'+v.icon+'</span></div><div class="carType">'+v.subtitle+'</div><div class="carMetrics"><div><strong>'+(Number.isFinite(mp)?mp.toFixed(1):"—")+'</strong><small>Weighted MPG</small></div><div><strong>'+format(data.length)+'</strong><small>Fill-ups</small></div></div>';node.addEventListener("click",()=>{state.selected=v.key;render()});return node}));const body=$("history");body.replaceChildren();for(const r of [...rows].reverse().slice(0,9)){let tr=document.createElement("tr");const d=[r.fuelup_date,format(num(r.odometer)),Number.isFinite(num(r.gallons))?num(r.gallons).toFixed(2):"—",num(r.mpg)>0?num(r.mpg).toFixed(1):"—",money(num(r.gallons)*num(r.price))];for(let val of d){let td=document.createElement("td");td.textContent=val;tr.append(td)}body.append(tr)}if(!rows.length){let tr=document.createElement("tr"),td=document.createElement("td");td.colSpan=5;td.className="empty";td.textContent=state.token?"No fuel-ups found.":"Connect Google to read your data.";tr.append(td);body.append(tr)}drawChart(rows)}
-function drawChart(rows){const metric=$("chartMetric").value;const good=rows.filter(r=>metric!=="mpg"||eligible(r));const last=good.slice(-80);const data=last.map(r=>metric==="mpg"?num(r.mpg):metric==="price"?num(r.price):num(r.gallons)*num(r.price));if(state.chart){state.chart.destroy();state.chart=null}if(!window.Chart)return;state.chart=new Chart($("trendChart"),{type:"line",data:{labels:last.map(r=>r.fuelup_date),datasets:[{label:metric==="mpg"?"MPG":metric==="price"?"$/gallon":"Fill-up cost",data,borderColor:"#42dcb2",backgroundColor:"#42dcb226",fill:true,tension:.18,pointRadius:last.length>35?0:2,spanGaps:false}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{mode:"index",intersect:false}},scales:{x:{ticks:{color:"#91a7b6",maxTicksLimit:6},grid:{display:false}},y:{ticks:{color:"#91a7b6"},grid:{color:"#293b4d"}}}}})}
-function recalc(){const k=$("formVehicle").value,odo=num($("formOdo").value),gals=num($("formGallons").value),price=num($("formPrice").value),prev=maxOdo(k),miles=odo-prev;const partial=$("formPartial").checked||$("formMissed").checked;$("formMiles").textContent=prev&&miles>0?format(miles)+" mi":"—";$("formMPG").textContent=!partial&&miles>0&&gals>0?(miles/gals).toFixed(2)+" MPG":"—";$("formCost").textContent=money(gals*price)}
-function openForm(){if(!state.token){status("Connect Google first to save new fuel-ups.",true);return}$("formVehicle").value=state.selected;$("formDate").value=isoToday();$("formOdo").value="";$("formGallons").value="";$("formPrice").value="";$("formBrand").value="";$("formNotes").value="";$("formPartial").checked=false;$("formMissed").checked=false;recalc();$("fuelDialog").showModal()}
-async function save(event){event.preventDefault();if(state.busy)return;let k=$("formVehicle").value,vehicle=VEHICLES.find(x=>x.key===k),odo=num($("formOdo").value),gals=num($("formGallons").value),price=num($("formPrice").value),date=$("formDate").value,previous=maxOdo(k),miles=odo-previous,partial=$("formPartial").checked,missed=$("formMissed").checked;if(!vehicle||!/^\d{4}-\d{2}-\d{2}$/.test(date)||!(odo>0&&gals>0&&price>=0)){status("Please enter a valid date, odometer, gallons and price.",true);return}if(previous&&odo<=previous){status("New odometer must exceed the previous logged mileage ("+format(previous)+").",true);return}if(entries(k).some(r=>r.fuelup_date===date&&num(r.odometer)===odo)){status("This date and odometer are already recorded.",true);return}const mpg=previous&&!partial&&!missed?miles/gals:0;const values=[vehicle.name,vehicle.name,mpg||0,odo,previous?miles:0,gals,price,50,date,new Date().toISOString(),"",$("formNotes").value,missed?1:0,partial?1:0,"","",$("formBrand").value];state.busy=true;$("saveBtn").disabled=true;$("saveBtn").textContent="Saving…";try{ // Read again before append to avoid stale local duplicates
-const latest=parse((await request(rangeUrl(vehicle.sheet))).values);const liveMax=Math.max(0,...latest.map(r=>num(r.odometer)).filter(Number.isFinite));if(latest.some(r=>r.fuelup_date===date&&num(r.odometer)===odo))throw Error("That fuel-up already exists in Google Sheets.");if(liveMax!==previous)throw Error("Spreadsheet mileage changed. Refresh before saving to avoid an incorrect MPG.");
-const url=rangeUrl(vehicle.sheet)+":append?valueInputOption=RAW&insertDataOption=INSERT_ROWS";await request(url,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({majorDimension:"ROWS",values:[values]})});$("fuelDialog").close();await load();status("Saved "+vehicle.name+" fuel-up directly to "+vehicle.sheet+" ✔")}catch(e){status("Not saved: "+e.message,true)}finally{state.busy=false;$("saveBtn").disabled=false;$("saveBtn").textContent="Save to Google Sheets"}}
+function render(){const k=state.selected,rows=filtered(entries(k));$("totalCount").textContent=format(VEHICLES.reduce((t,v)=>t+entries(v.key).length,0));const avg=weightedMpg(rows);$("avgMpg").textContent=Number.isFinite(avg)?avg.toFixed(1):"—";const spend=rows.reduce((t,r)=>t+(num(r.gallons)>0&&num(r.price)>=0?num(r.gallons)*num(r.price):0),0);$("fuelSpend").textContent=money(spend);$("latestOdo").textContent=maxOdo(k)?format(maxOdo(k)):"—";const miles=rows.reduce((t,r)=>t+(num(r.miles)>0?num(r.miles):0),0);$("costMile").textContent=miles>0?money(spend/miles):"—";$("totalGallons").textContent=format(rows.reduce((t,r)=>t+(num(r.gallons)>0?num(r.gallons):0),0));$("vehicles").replaceChildren(...VEHICLES.map(v=>{let data=entries(v.key),node=document.createElement("button");node.type="button";node.className="vehicle"+(v.key===k?" active":"");let mp=weightedMpg(data);node.innerHTML='<div class="carTitle"><span>'+v.name+'</span><span class="carIcon">'+v.icon+'</span></div><div class="carType">'+v.subtitle+'</div><div class="carMetrics"><div><strong>'+(Number.isFinite(mp)?mp.toFixed(1):"—")+'</strong><small>Weighted MPG</small></div><div><strong>'+format(data.length)+'</strong><small>Fill-ups</small></div></div>';node.addEventListener("click",()=>{state.selected=v.key;render()});return node}));const body=$("history");body.replaceChildren();for(const r of [...rows].reverse().slice(0,9)){let tr=document.createElement("tr");const d=[r.fuelup_date,format(num(r.odometer)),Number.isFinite(num(r.gallons))?num(r.gallons).toFixed(2):"—",num(r.mpg)>0?num(r.mpg).toFixed(1):"—",money(num(r.gallons)*num(r.price))];for(let val of d){let td=document.createElement("td");td.textContent=val;tr.append(td)}let action=document.createElement("td"),btn=document.createElement("button");btn.type="button";btn.textContent="Edit";btn.className="editBtn";btn.addEventListener("click",()=>openForm(r));action.append(btn);tr.append(action);body.append(tr)}if(!rows.length){let tr=document.createElement("tr"),td=document.createElement("td");td.colSpan=6;td.className="empty";td.textContent=state.token?"No fuel-ups found.":"Connect Google to read your data.";tr.append(td);body.append(tr)}drawChart(rows)}
+function drawChart(rows){
+ const metric=$("chartMetric").value,series=metric==="rolling"?rollingSeries(rows,state.rolling):rows.filter(r=>metric!=="mpg"||eligible(r)).map(r=>({r,value:metric==="mpg"?num(r.mpg):metric==="price"?num(r.price):num(r.gallons)*num(r.price)}));
+ const last=series.filter(x=>Number.isFinite(x.value)&&x.value>=0).slice(-160);
+ if(state.chart){state.chart.destroy();state.chart=null}if(!window.Chart)return;
+ state.chart=new Chart($("trendChart"),{type:"line",data:{labels:last.map(x=>x.r.fuelup_date),datasets:[{label:metric==="rolling"?"Rolling weighted MPG":metric.toUpperCase(),data:last.map(x=>x.value),borderColor:"#42dcb2",backgroundColor:"#42dcb226",fill:true,tension:.2,pointRadius:last.length>45?0:2,spanGaps:false}]},options:{responsive:true,maintainAspectRatio:false,interaction:{mode:"index",intersect:false},plugins:{legend:{display:false}},scales:{x:{ticks:{color:"#91a7b6",maxTicksLimit:7},grid:{display:false}},y:{beginAtZero:false,ticks:{color:"#91a7b6"},grid:{color:"#293b4d"}}}}});
+}
+function formValues(){return {k:$("formVehicle").value,odo:num($("formOdo").value),gals:num($("formGallons").value),price:num($("formPrice").value),date:$("formDate").value,partial:$("formPartial").checked,missed:$("formMissed").checked}}
+function previousAndNext(k,odo,excludeRow){const rows=entries(k).filter(r=>r.__row!==excludeRow).sort((a,b)=>num(a.odometer)-num(b.odometer));return {rows,previous:rows.filter(r=>num(r.odometer)<odo).at(-1),next:rows.find(r=>num(r.odometer)>odo)}}
+function recalc(){
+ const v=formValues(),{rows,previous}=previousAndNext(v.k,v.odo,state.editing?.row),distance=v.odo-num(previous?.odometer),mpg=estimatedMpg(rows,v.odo,v.gals,v.missed,v.partial);
+ $("formMiles").textContent=previous&&distance>0?format(distance)+" mi":"—";
+ $("formMPG").textContent=Number.isFinite(mpg)?mpg.toFixed(2)+" MPG":"—";
+ $("formCost").textContent=v.gals>0&&v.price>=0?money(v.gals*v.price):"—";
+ $("formWarn").textContent=Number.isFinite(mpg)&&(mpg<5||mpg>65)?"Unusual MPG: "+mpg.toFixed(1)+". Check mileage and gallons.":(!previous?"No preceding odometer: MPG cannot be calculated.":"");
+}
+function openForm(r=null){
+ if(!state.token){status("Connect Google first to edit or save fuel-ups.",true);return}
+ state.editing=r?{row:r.__row,vehicle:state.selected,original:r}:null;
+ $("formVehicle").value=state.selected;$("formVehicle").disabled=!!r;
+ $("formTitle").textContent=r?"Edit fuel-up":"New fuel-up";$("saveBtn").textContent=r?"Save changes":"Save to Google Sheets";
+ $("formDate").value=r?.fuelup_date||isoToday();$("formOdo").value=r?.odometer||"";
+ $("formGallons").value=r?.gallons||"";$("formPrice").value=r?.price||"";
+ $("formBrand").value=r?.brand||"";$("formNotes").value=r?.notes||"";
+ $("formPartial").checked=r?flag(r.partial_fuelup):false;$("formMissed").checked=r?flag(r.missed_fuelup):false;
+ recalc();$("fuelDialog").showModal();
+}
+function validate(v,rows,excludeRow){
+ const existing=rows.filter(r=>r.__row!==excludeRow),byOdo=[...existing].sort((a,b)=>num(a.odometer)-num(b.odometer);
+ const prev=byOdo.filter(r=>num(r.odometer)<v.odo).at(-1),next=byOdo.find(r=>num(r.odometer)>v.odo);
+ if(!/^\d{4}-\d{2}-\d{2}$/.test(v.date)||Number.isNaN(new Date(v.date+"T12:00:00").valueOf())||!(Number.isInteger(v.odo)&&v.odo>0&&v.gals>0&&v.gals<200&&v.price>=0&&v.price<100))throw Error("Check date, whole-mile odometer, gallons (0–200), and price.");
+ if(existing.some(r=>num(r.odometer)===v.odo||r.fuelup_date===v.date&&num(r.odometer)===v.odo))throw Error("Duplicate odometer entry already exists.");
+ if(prev&&v.odo<=num(prev.odometer)||next&&v.odo>=num(next.odometer))throw Error("Odometer must fit between adjacent records.");
+ const chronological=[...existing].sort((a,b)=>a.fuelup_date.localeCompare(b.fuelup_date)||num(a.odometer)-num(b.odometer));
+ const before=chronological.filter(r=>r.fuelup_date<=v.date).at(-1),after=chronological.find(r=>r.fuelup_date>v.date);
+ if(before&&v.odo<=num(before.odometer)||after&&v.odo>=num(after.odometer))throw Error("Date and odometer conflict with historical records.");
+ const delta=prev?v.odo-num(prev.odometer):0;if(delta>1600)throw Error("Over 1,600 miles since previous entry. Check odometer or missed fuel-ups.");
+ return {prev,mpg:estimatedMpg(existing,v.odo,v.gals,v.missed,v.partial),delta};
+}
+function rowValues(v,original,calculated){
+ const vehicle=VEHICLES.find(x=>x.key===v.k),src=original||{};
+ return [src.car_name||vehicle.name,src.model||({"bmw":"BMW 335d","gls":"Mercedes-Benz GLS550","f150":"Ford F-150"}[v.k]),
+ Number.isFinite(calculated.mpg)?Number(calculated.mpg.toFixed(3)):0,v.odo,calculated.delta,v.gals,v.price,src.city_percentage||50,v.date,src.date_added||new Date().toISOString(),
+ src.tags||"",$("formNotes").value,v.missed?1:0,v.partial?1:0,src.latitude||"",src.longitude||"",$("formBrand").value];
+}
+async function save(event){
+ event.preventDefault();if(state.busy)return;
+ const v=formValues(),vehicle=VEHICLES.find(x=>x.key===v.k),edit=state.editing;
+ if(!vehicle)return status("Choose a vehicle.",true);
+ state.busy=true;$("saveBtn").disabled=true;$("saveBtn").textContent="Saving…";
+ try{
+ const latest=parse((await request(rangeUrl(vehicle.sheet))).values);
+ if(edit&&edit.vehicle!==v.k)throw Error("Vehicle cannot be changed when editing.");
+ const old=edit&&latest.find(r=>r.__row===edit.row);
+ if(edit&&(!old||old.odometer!==edit.original.odometer||old.fuelup_date!==edit.original.fuelup_date))throw Error("This row changed in Sheets. Reload before editing.");
+ const calc=validate(v,latest,edit?.row),mpg=calc.mpg;
+ if(Number.isFinite(mpg)&&(mpg<5||mpg>65)&&!confirm("Unusual MPG of "+mpg.toFixed(1)+". Save anyway?"))return;
+ const original=old||null;
+ // Preserve legacy Fuelly MPG when editing metadata alone; calculate only when fuel inputs change.
+ if(old&&num(old.odometer)===v.odo&&num(old.gallons)===v.gals&&flag(old.partial_fuelup)===v.partial&&flag(old.missed_fuelup)===v.missed){calc.mpg=num(old.mpg);calc.delta=num(old.miles)}
+ const values=rowValues(v,original,calc);
+ let url,method;
+ if(edit){url="https://sheets.googleapis.com/v4/spreadsheets/"+encodeURIComponent(SHEET_ID)+"/values/"+encodeURIComponent("'"+vehicle.sheet+"'!A"+edit.row+":Q"+edit.row)+"?valueInputOption=RAW";method="PUT"}
+ else{url=rangeUrl(vehicle.sheet)+":append?valueInputOption=RAW&insertDataOption=INSERT_ROWS";method="POST"}
+ await request(url,{method,headers:{"Content-Type":"application/json"},body:JSON.stringify({majorDimension:"ROWS",values:[values]})});
+ $("fuelDialog").close();state.editing=null;
+ try{await load();status((edit?"Updated":"Saved")+" "+vehicle.name+" record ✔")}catch(e){setSync("Saved; refresh needed");status("Google Sheets confirmed the save, but dashboard refresh failed. Reconnect or refresh to see it.",true)}
+ }catch(e){status("Not saved: "+e.message,true)}
+ finally{state.busy=false;$("saveBtn").disabled=false;$("saveBtn").textContent="Save to Google Sheets"}
+}
 function connect(){
  if(!CONFIG.googleClientId){status("Google OAuth Client ID is missing.",true);return}
  if(!window.google?.accounts?.oauth2){status("Google sign-in is loading. Try again.",true);return}
@@ -48,4 +127,4 @@ function connect(){
  });
  state.client.requestAccessToken({prompt:""});
 }
-document.addEventListener("DOMContentLoaded",()=>{$("formVehicle").replaceChildren(...VEHICLES.map(v=>{let o=document.createElement("option");o.value=v.key;o.textContent=v.name;return o}));$("authBtn").addEventListener("click",connect);$("newFillBtn").addEventListener("click",openForm);$("closeDialog").addEventListener("click",()=>$("fuelDialog").close());$("cancelBtn").addEventListener("click",()=>$("fuelDialog").close());$("fuelForm").addEventListener("submit",save);["formVehicle","formOdo","formGallons","formPrice","formPartial","formMissed"].forEach(x=>$(x).addEventListener("input",recalc));$("chartMetric").addEventListener("change",render);render();if(!CONFIG.googleClientId)setSync("OAuth setup required");if("serviceWorker"in navigator)navigator.serviceWorker.register("./sw.js").catch(()=>{})});
+document.addEventListener("DOMContentLoaded",()=>{$("formVehicle").replaceChildren(...VEHICLES.map(v=>{let o=document.createElement("option");o.value=v.key;o.textContent=v.name;return o}));$("authBtn").addEventListener("click",connect);$("newFillBtn").addEventListener("click",openForm);$("closeDialog").addEventListener("click",()=>$("fuelDialog").close());$("cancelBtn").addEventListener("click",()=>$("fuelDialog").close());$("fuelForm").addEventListener("submit",save);["formVehicle","formOdo","formGallons","formPrice","formPartial","formMissed"].forEach(x=>$(x).addEventListener("input",recalc));$("chartMetric").addEventListener("change",render);$("period").addEventListener("change",e=>{state.period=e.target.value;render()});$("rolling").addEventListener("change",e=>{state.rolling=Number(e.target.value);render()});render();if(!CONFIG.googleClientId)setSync("OAuth setup required");if("serviceWorker"in navigator)navigator.serviceWorker.register("./sw.js").catch(()=>{})});
