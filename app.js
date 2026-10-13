@@ -20,7 +20,21 @@ function parse(rows){if(!rows?.length)return [];const header=rows[0].map(x=>Stri
 function entries(k){return state.entries[k]||[]}
 function eligible(r){return num(r.mpg)>0&&num(r.gallons)>0&&!flag(r.partial_fuelup)&&!flag(r.missed_fuelup)&&num(r.miles)>0}
 function flag(v){return ["1","true","yes"].includes(String(v).toLowerCase())}
-function weightedMpg(rows){const good=rows.filter(eligible);const miles=good.reduce((t,r)=>t+(Number.isFinite(num(r.miles))?num(r.miles):0),0);const gals=good.reduce((t,r)=>t+num(r.gallons),0);return gals>0?miles/gals:NaN}
+function weightedMpg(rows){
+ const sorted=[...rows].sort((a,b)=>num(a.odometer)-num(b.odometer));let miles=0,gallons=0,partials=[],previousFull=null;
+ for(const r of sorted){
+  if(flag(r.missed_fuelup)){partials=[];previousFull=null;continue}
+  if(flag(r.partial_fuelup)){partials.push(r);continue}
+  if(!eligible(r)){partials=[];previousFull=r;continue}
+  if(partials.length){
+   const begin=num(previousFull?.odometer),end=num(r.odometer);
+   const sum=num(r.gallons)+partials.reduce((a,p)=>a+num(p.gallons),0);
+   if(Number.isFinite(begin)&&end>begin&&sum>0&&partials.every(p=>num(p.gallons)>0)){miles+=end-begin;gallons+=sum}
+  }else{miles+=num(r.miles);gallons+=num(r.gallons)}
+  partials=[];previousFull=r;
+ }
+ return gallons>0?miles/gallons:NaN
+}
 function estimatedMpg(rows,odo,gallons,missed,partial){
  if(missed||partial)return NaN;
  const preceding=rows.filter(r=>num(r.odometer)<odo).sort((a,b)=>num(a.odometer)-num(b.odometer));
