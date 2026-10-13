@@ -51,7 +51,19 @@ function estimatedMpg(rows,odo,gallons,missed,partial){
  return Number.isFinite(begin)&&odo>begin&&sum>0?(odo-begin)/sum:NaN;
 }
 function filtered(rows){const p=state.period;if(p==="all")return rows;const cutoff=new Date();cutoff.setFullYear(cutoff.getFullYear()-Number(p));return rows.filter(r=>new Date(r.fuelup_date+"T12:00:00")>=cutoff)}
-function rollingSeries(rows,n){const good=rows.filter(eligible);return good.map((r,i)=>({r,value:weightedMpg(good.slice(Math.max(0,i-n+1),i+1))}))}
+function rollingSeries(rows,n){
+ // Calculate windows on the full history, then select the visible date range.
+ // Keep the original Fuelly MPG for each complete recorded fill.
+ const good=rows.filter(eligible),out=[];
+ for(let i=0;i<good.length;i++){
+  const window=good.slice(Math.max(0,i-n+1),i+1);
+  if(window.length<n)continue;
+  const gallons=window.reduce((a,r)=>a+num(r.gallons),0);
+  const miles=window.reduce((a,r)=>a+num(r.miles),0);
+  if(gallons>0)out.push({r:good[i],value:miles/gallons});
+ }
+ return out;
+}
 function maxOdo(k){return Math.max(0,...entries(k).map(r=>num(r.odometer)).filter(Number.isFinite))}
 async function request(url,opts={}){const response=await fetch(url,{...opts,headers:{Authorization:"Bearer "+state.token,...(opts.headers||{})}});if(response.status===401){state.token="";setSync("Session expired");$("authBtn").textContent="Reconnect Google";throw Error("Google session expired. Connect again.")}const json=await response.json().catch(()=>({}));if(!response.ok)throw Error(json?.error?.message||"Google Sheets request failed");return json}
 
@@ -59,11 +71,20 @@ function rangeUrl(sheet){return "https://sheets.googleapis.com/v4/spreadsheets/"
 async function load(){if(!state.token)throw Error("Connect Google first");setSync("Syncing…");const result=await Promise.all(VEHICLES.map(v=>request(rangeUrl(v.sheet))));VEHICLES.forEach((v,i)=>state.entries[v.key]=parse(result[i].values));setSync("Synced with Google Sheets");render();status("Loaded "+VEHICLES.reduce((n,v)=>n+entries(v.key).length,0)+" fuel-ups directly from your private spreadsheet.")}
 function render(){const k=state.selected,rows=filtered(entries(k));$("totalCount").textContent=format(VEHICLES.reduce((t,v)=>t+entries(v.key).length,0));const avg=weightedMpg(rows);$("avgMpg").textContent=Number.isFinite(avg)?avg.toFixed(1):"—";const spend=rows.reduce((t,r)=>t+(num(r.gallons)>0&&num(r.price)>=0?num(r.gallons)*num(r.price):0),0);$("fuelSpend").textContent=money(spend);$("latestOdo").textContent=maxOdo(k)?format(maxOdo(k)):"—";const miles=rows.reduce((t,r)=>t+(num(r.miles)>0?num(r.miles):0),0);$("costMile").textContent=miles>0?money(spend/miles):"—";$("totalGallons").textContent=format(rows.reduce((t,r)=>t+(num(r.gallons)>0?num(r.gallons):0),0));$("vehicles").replaceChildren(...VEHICLES.map(v=>{let data=entries(v.key),node=document.createElement("button");node.type="button";node.className="vehicle"+(v.key===k?" active":"");let mp=weightedMpg(data);node.innerHTML='<div class="carTitle"><span>'+v.name+'</span><span class="carIcon">'+v.icon+'</span></div><div class="carType">'+v.subtitle+'</div><div class="carMetrics"><div><strong>'+(Number.isFinite(mp)?mp.toFixed(1):"—")+'</strong><small>Weighted MPG</small></div><div><strong>'+format(data.length)+'</strong><small>Fill-ups</small></div></div>';node.addEventListener("click",()=>{state.selected=v.key;render()});return node}));const body=$("history");body.replaceChildren();for(const r of [...rows].reverse().slice(0,9)){let tr=document.createElement("tr");const d=[displayDate(r.fuelup_date),format(num(r.odometer)),Number.isFinite(num(r.gallons))?num(r.gallons).toFixed(2):"—",num(r.mpg)>0?num(r.mpg).toFixed(1):"—",money(num(r.gallons)*num(r.price))];for(let val of d){let td=document.createElement("td");td.textContent=val;tr.append(td)}let action=document.createElement("td"),btn=document.createElement("button");btn.type="button";btn.textContent="Edit";btn.className="editBtn";btn.addEventListener("click",()=>openForm(r));action.append(btn);tr.append(action);body.append(tr)}if(!rows.length){let tr=document.createElement("tr"),td=document.createElement("td");td.colSpan=6;td.className="empty";td.textContent=state.token?"No fuel-ups found.":"Connect Google to read your data.";tr.append(td);body.append(tr)}drawChart(rows)}
 function drawChart(rows){
- const metric=$("chartMetric").value;$("rolling").hidden=metric!=="rolling";$("chartTitle").textContent=({rolling:"Rolling MPG trend",mpg:"MPG trend",price:"Fuel price trend",cost:"Fill-up cost trend"})[metric];const series=metric==="rolling"?rollingSeries(rows,state.rolling):rows.filter(r=>metric!=="mpg"||eligible(r)).map(r=>({r,value:metric==="mpg"?num(r.mpg):metric==="price"?num(r.price):num(r.gallons)*num(r.price)}));
- const last=series.filter(x=>Number.isFinite(x.value)&&x.value>=0);
- if(state.chart){state.chart.destroy();state.chart=null}if(!window.Chart)return;
- state.chart=new Chart($("trendChart"),{type:"line",data:{labels:last.map(x=>displayDate(x.r.fuelup_date)),datasets:[{label:metric==="rolling"?"Rolling weighted MPG":metric.toUpperCase(),data:last.map(x=>x.value),borderColor:"#42dcb2",backgroundColor:"#42dcb226",fill:true,tension:.2,pointRadius:last.length>45?0:2,spanGaps:false}]},options:{responsive:true,maintainAspectRatio:false,interaction:{mode:"index",intersect:false},plugins:{legend:{display:false}},scales:{x:{ticks:{color:"#91a7b6",maxTicksLimit:7},grid:{display:false}},y:{beginAtZero:false,ticks:{color:"#91a7b6"},grid:{color:"#293b4d"}}}}});
+ const metric=$("chartMetric").value,rolling=metric==="rolling";
+ $("rollingControl").hidden=!rolling;
+ $("chartTitle").textContent=({rolling:"Rolling MPG trend",mpg:"MPG per fill-up",price:"Fuel price trend",cost:"Fill-up cost trend"})[metric];
+ const series=rolling?rollingSeries(entries(state.selected),state.rolling).filter(x=>rows.includes(x.r)):rows.filter(r=>metric!=="mpg"||eligible(r)).map(r=>({r,value:metric==="mpg"?num(r.mpg):metric==="price"?num(r.price):num(r.gallons)*num(r.price)}));
+ const points=series.filter(x=>Number.isFinite(x.value)&&x.value>0&&/^\\d{4}-\\d{2}-\\d{2}$/.test(x.r.fuelup_date));
+ if(state.chart){state.chart.destroy();state.chart=null}
+ if(!window.Chart)return;
+ const labels=points.map(x=>displayDate(x.r.fuelup_date)),data=points.map(x=>x.value);
+ state.chart=new Chart($("trendChart"),{
+  type:"line",data:{labels,datasets:[{label:({rolling:"Rolling weighted MPG",mpg:"MPG per fill-up",price:"Price per gallon",cost:"Fill-up cost"})[metric],data,borderColor:"#42dcb2",backgroundColor:"#42dcb226",fill:true,tension:rolling?.22:.08,pointRadius:points.length>40?0:2,spanGaps:false}]},
+  options:{responsive:true,maintainAspectRatio:false,interaction:{mode:"index",intersect:false},plugins:{legend:{display:false},tooltip:{callbacks:{title:items=>items[0]?.label||""}}},scales:{x:{ticks:{color:"#91a7b6",maxTicksLimit:7,maxRotation:0,minRotation:0},grid:{display:false}},y:{beginAtZero:false,ticks:{color:"#91a7b6"},grid:{color:"#293b4d"}}}}
+ });
 }
+
 function formValues(){return {k:$("formVehicle").value,odo:num($("formOdo").value),gals:num($("formGallons").value),price:num($("formPrice").value),date:inputISO($("formDate").value),partial:$("formPartial").checked,missed:$("formMissed").checked}}
 function previousAndNext(k,odo,excludeRow){const rows=entries(k).filter(r=>r.__row!==excludeRow).sort((a,b)=>num(a.odometer)-num(b.odometer));return {rows,previous:rows.filter(r=>num(r.odometer)<odo).at(-1),next:rows.find(r=>num(r.odometer)>odo)}}
 function recalc(){
