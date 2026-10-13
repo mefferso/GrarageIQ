@@ -1,36 +1,35 @@
 # GarageIQ
-Progressive web app for fuel economy analytics backed by your existing private Google Sheet.
 
-## Implemented
-- BMW 335d, GLS550, and F-150 individual dashboards
-- Live charts, recent fill-ups, cost, and weighted MPG
-- New fill-up form with date, odometer, gallons, price, notes, and partial/missed flags
-- Official Google Sheets API for reading and appending to existing MPG tabs
-- Google OAuth access tokens only in memory; no private fuel records in this public repository
-- Installable PWA shell; online connection required for reading/saving records
+Personal fuel-cost and MPG dashboard for three vehicles, deployed on GitHub Pages and backed by a private Google spreadsheet.
 
-## One-time setup (required)
-1. Open https://console.cloud.google.com/ and create/select a Google Cloud project.
-2. Enable **Google Sheets API** under APIs & Services → Library.
-3. Configure Google Auth Platform / OAuth consent screen. External + Testing is sufficient for personal use. Add your own Google account as a test user; authorize Google Sheets scope.
-4. Create an **OAuth Client ID**, type **Web application**.
-5. Add Authorized JavaScript origin **https://mefferso.github.io** (origin only, no repository path).
-6. Copy the **client ID** (not a client secret!) into `config.js` under `googleClientId` and commit the change. Client IDs are public and safe in client-side code.
-7. GitHub repository → **Settings → Pages** → Deploy from a branch → **main** → **/(root)** → Save.
-8. Visit https://mefferso.github.io/GrarageIQ/ , press Connect Google, choose the Google account with editing rights on the sheet, and approve.
+## Current features
+- Select BMW 335d, Mercedes GLS550, or Ford F-150.
+- Load and preserve original Fuelly history from three MPG tabs; no re-import.
+- Google OAuth and Google Sheets API remain unchanged; reconnecting after refresh is expected.
+- Add fuel-ups and edit existing records in place, with a live sheet re-read before saving.
+- Validate odometer sequence, date order, duplicate mileage, gallons, and fuel price.
+- Calculate multi-partial-fill MPG using distance from the last complete baseline and all intervening partial gallons.
+- Keep missed-fill intervals out of calculated MPG until a new baseline is established.
+- Preserve historical Fuelly MPG when editing metadata only.
+- Show selectable all-time, 1-year, 3-year, or 5-year ranges, rolling weighted 5/10/20-fill MPG, price and cost charts, spend and gallons, and cost per mile.
+- PWA installable shell, responsive mobile controls, and editing in recent-fill history.
 
-OAuth uses the Sheets scope to modify your private spreadsheet, but it does *not* make your sheet public. The Google account determines who can read/write.
+## Data / safety
+Spreadsheet ID and OAuth client ID are public identifiers, not secrets. Never add a client secret or export private spreadsheet data into this public repository.
 
-## Data mappings
-The configured Google spreadsheet holds the original Fuelly 17-column schema. GarageIQ only accesses MPG_335d, MPG_GLS 550 and MPG_F150. Maintenance tabs are untouched.
+The app reads and writes only:
+- `MPG_335d`
+- `MPG_GLS 550`
+- `MPG_F150`
 
-Price is per gallon. Fuel cost = gallons × price. A complete fill-up estimates MPG from miles since the previous odometer divided by gallons. Partial/missed entries get zero MPG and are excluded from trend averages. Weighted average MPG uses recorded miles and gallons for valid full fuel-ups. We will improve multi-partial-fill calculations in a later version.
+Maintenance tabs are not touched. The initial Google OAuth flow is intentional, and no Firebase or Cloudflare backend is used.
 
-Dates are saved as ISO text, preserving the spreadsheet date format. Records append to the existing sheet, with a live mileage/duplicate pre-check. Concurrent same-time entries are not transactionally locked.
+When editing older fuel-ups, subsequent historical MPG values are *not* automatically rewritten; this avoids silently changing imported records. If you change mileage/gallons of older entries, review subsequent MPG manually. Google Sheets API writes are not transactional across simultaneous clients, so a concurrency race remains possible.
 
-This PWA caches its user interface but does **not** cache personal fuel records or support offline writes yet.
+The date-range filter applies to selected-vehicle metrics and charts; vehicle cards show lifetime values. Fuel cost per mile uses recorded purchases divided by recorded miles in the selected period, and therefore should be understood as a logged-data estimate, not a full vehicle ownership cost.
 
-## Next
-- Improve tank segment logic for partial fills.
-- Add historical correction/editing UI.
-- Add separate mileage-based Google Apps Script maintenance alerts.
+## Testing
+Source was syntax-checked and calculation cases exercised without touching spreadsheet data. A signed-in production read/edit/write and phone/browser smoke test remain necessary before considering the new workflow fully verified.
+
+## Later phase
+Maintenance visualization and mileage-triggered reminders are deliberately not enabled.
