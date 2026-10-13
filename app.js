@@ -135,6 +135,7 @@ function validate(v,rows,excludeRow){
  const delta=prev?v.odo-num(prev.odometer):0;if(delta>1600)throw Error("Over 1,600 miles since previous entry. Check odometer or missed fuel-ups.");
  const mpg=estimatedMpg(existing,v.odo,v.gals,v.missed,v.partial);return {prev,mpg,delta:Number.isFinite(mpg)?intervalMiles(existing,v.odo):delta};
 }
+function preserveLegacyMpg(old,v){return !!old&&num(old.odometer)===v.odo&&num(old.gallons)===v.gals&&flag(old.partial_fuelup)===v.partial&&flag(old.missed_fuelup)===v.missed}
 function rowValues(v,original,calculated){
  const vehicle=VEHICLES.find(x=>x.key===v.k),src=original||{};
  return [src.car_name||vehicle.name,src.model||({"bmw":"BMW 335d","gls":"Mercedes-Benz GLS550","f150":"Ford F-150"}[v.k]),
@@ -155,7 +156,7 @@ async function save(event){
  if(Number.isFinite(mpg)&&(mpg<5||mpg>65)&&!confirm("Unusual MPG of "+mpg.toFixed(1)+". Save anyway?"))return;
  const original=old||null;
  // Preserve legacy Fuelly MPG when editing metadata alone; calculate only when fuel inputs change.
- if(old&&num(old.odometer)===v.odo&&num(old.gallons)===v.gals&&flag(old.partial_fuelup)===v.partial&&flag(old.missed_fuelup)===v.missed){calc.mpg=num(old.mpg);calc.delta=num(old.miles)}
+ if(preserveLegacyMpg(old,v)){calc.mpg=num(old.mpg);calc.delta=num(old.miles)}
  const values=rowValues(v,original,calc);
  let url,method;
  if(edit){url="https://sheets.googleapis.com/v4/spreadsheets/"+encodeURIComponent(SHEET_ID)+"/values/"+encodeURIComponent("'"+vehicle.sheet+"'!A"+edit.row+":Q"+edit.row)+"?valueInputOption=RAW";method="PUT"}
