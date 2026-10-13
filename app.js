@@ -53,16 +53,31 @@ function estimatedMpg(rows,odo,gallons,missed,partial){
  return Number.isFinite(begin)&&odo>begin&&sum>0?(odo-begin)/sum:NaN;
 }
 function filtered(rows){const p=state.period;if(p==="all")return rows;const cutoff=new Date();cutoff.setFullYear(cutoff.getFullYear()-Number(p));return rows.filter(r=>new Date(r.fuelup_date+"T12:00:00")>=cutoff)}
+function fuelSegments(rows){
+ const result=[],ordered=[...rows].sort((a,b)=>num(a.odometer)-num(b.odometer));
+ let baseline=null,partials=[],quarantine=false;
+ for(const r of ordered){
+  if(flag(r.missed_fuelup)){baseline=null;partials=[];quarantine=true;continue}
+  if(flag(r.partial_fuelup)){partials.push(r);continue}
+  if(!eligible(r)){partials=[];if(num(r.odometer)>0&&num(r.gallons)>0){baseline=r;quarantine=false}continue}
+  let miles=num(r.miles),gallons=num(r.gallons);
+  if(partials.length){
+   if(!baseline||quarantine||partials.some(p=>!(num(p.gallons)>0))){baseline=r;partials=[];quarantine=false;continue}
+   miles=num(r.odometer)-num(baseline.odometer);
+   gallons+=partials.reduce((sum,p)=>sum+num(p.gallons),0);
+  }
+  if(!quarantine&&miles>0&&gallons>0)result.push({r,miles,gallons});
+  baseline=r;partials=[];quarantine=false;
+ }
+ return result;
+}
 function rollingSeries(rows,n){
- // Calculate windows on the full history, then select the visible date range.
- // Keep the original Fuelly MPG for each complete recorded fill.
- const good=rows.filter(eligible),out=[];
- for(let i=0;i<good.length;i++){
-  const window=good.slice(Math.max(0,i-n+1),i+1);
-  if(window.length<n)continue;
-  const gallons=window.reduce((a,r)=>a+num(r.gallons),0);
-  const miles=window.reduce((a,r)=>a+num(r.miles),0);
-  if(gallons>0)out.push({r:good[i],value:miles/gallons});
+ const segments=fuelSegments(rows),out=[];
+ for(let i=n-1;i<segments.length;i++){
+  const window=segments.slice(i-n+1,i+1);
+  const gallons=window.reduce((sum,x)=>sum+x.gallons,0);
+  const miles=window.reduce((sum,x)=>sum+x.miles,0);
+  if(gallons>0)out.push({r:segments[i].r,value:miles/gallons});
  }
  return out;
 }
