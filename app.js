@@ -27,7 +27,7 @@ function weightedMpg(rows){
  for(const r of sorted){
   if(flag(r.missed_fuelup)){partials=[];previousFull=null;continue}
   if(flag(r.partial_fuelup)){partials.push(r);continue}
-  if(!eligible(r)){partials=[];previousFull=r;continue}
+  if(!eligible(r)){partials=[];if(num(r.odometer)>0&&num(r.gallons)>0)previousFull=r;continue}
   if(partials.length){
    const begin=num(previousFull?.odometer),end=num(r.odometer);
    const sum=num(r.gallons)+partials.reduce((a,p)=>a+num(p.gallons),0);
@@ -46,6 +46,7 @@ function estimatedMpg(rows,odo,gallons,missed,partial){
    const r=preceding[i];
    if(flag(r.missed_fuelup))return NaN;
    if(flag(r.partial_fuelup)){if(!(num(r.gallons)>0))return NaN;sum+=num(r.gallons);continue}
+   if(!(num(r.odometer)>0&&num(r.gallons)>0))return NaN;
    begin=num(r.odometer);break;
  }
  return Number.isFinite(begin)&&odo>begin&&sum>0?(odo-begin)/sum:NaN;
@@ -64,6 +65,7 @@ function rollingSeries(rows,n){
  }
  return out;
 }
+function intervalMiles(rows,odo){const sorted=rows.filter(r=>num(r.odometer)<odo).sort((a,b)=>num(a.odometer)-num(b.odometer));for(let i=sorted.length-1;i>=0;i--){const r=sorted[i];if(flag(r.missed_fuelup))return NaN;if(!flag(r.partial_fuelup))return num(r.odometer)>0?odo-num(r.odometer):NaN}return NaN}
 function maxOdo(k){return Math.max(0,...entries(k).map(r=>num(r.odometer)).filter(Number.isFinite))}
 async function request(url,opts={}){const response=await fetch(url,{...opts,headers:{Authorization:"Bearer "+state.token,...(opts.headers||{})}});if(response.status===401){state.token="";setSync("Session expired");$("authBtn").textContent="Reconnect Google";throw Error("Google session expired. Connect again.")}const json=await response.json().catch(()=>({}));if(!response.ok)throw Error(json?.error?.message||"Google Sheets request failed");return json}
 
@@ -109,13 +111,13 @@ function validate(v,rows,excludeRow){
  const existing=rows.filter(r=>r.__row!==excludeRow),byOdo=[...existing].sort((a,b)=>num(a.odometer)-num(b.odometer));
  const prev=byOdo.filter(r=>num(r.odometer)<v.odo).at(-1),next=byOdo.find(r=>num(r.odometer)>v.odo);
  if(!/^\d{4}-\d{2}-\d{2}$/.test(v.date)||Number.isNaN(new Date(v.date+"T12:00:00").valueOf())||!(Number.isInteger(v.odo)&&v.odo>0&&v.gals>0&&v.gals<200&&v.price>=0&&v.price<100))throw Error("Check date, whole-mile odometer, gallons (0–200), and price.");
- if(existing.some(r=>num(r.odometer)===v.odo||r.fuelup_date===v.date&&num(r.odometer)===v.odo))throw Error("Duplicate odometer entry already exists.");
+ if(existing.some(r=>num(r.odometer)===v.odo))throw Error("Duplicate odometer entry already exists.");
  if(prev&&v.odo<=num(prev.odometer)||next&&v.odo>=num(next.odometer))throw Error("Odometer must fit between adjacent records.");
  const chronological=[...existing].sort((a,b)=>a.fuelup_date.localeCompare(b.fuelup_date)||num(a.odometer)-num(b.odometer));
  const before=chronological.filter(r=>r.fuelup_date<=v.date).at(-1),after=chronological.find(r=>r.fuelup_date>v.date);
  if(before&&v.odo<=num(before.odometer)||after&&v.odo>=num(after.odometer))throw Error("Date and odometer conflict with historical records.");
  const delta=prev?v.odo-num(prev.odometer):0;if(delta>1600)throw Error("Over 1,600 miles since previous entry. Check odometer or missed fuel-ups.");
- return {prev,mpg:estimatedMpg(existing,v.odo,v.gals,v.missed,v.partial),delta};
+ const mpg=estimatedMpg(existing,v.odo,v.gals,v.missed,v.partial);return {prev,mpg,delta:Number.isFinite(mpg)?intervalMiles(existing,v.odo):delta};
 }
 function rowValues(v,original,calculated){
  const vehicle=VEHICLES.find(x=>x.key===v.k),src=original||{};
