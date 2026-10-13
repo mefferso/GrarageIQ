@@ -1,6 +1,10 @@
 # GarageIQ
 Progressive web app for fuel economy analytics backed by your existing private Google Sheet.
 
+## New: Persistent Google login
+
+The Firebase Authentication and secure Cloudflare Worker implementation is committed, but not activated until the account-owner setup is complete. See [PERSISTENT_LOGIN_SETUP.md](./PERSISTENT_LOGIN_SETUP.md). GarageIQ remains hosted on GitHub Pages. Until configured, the original Sheets OAuth connection stays usable.
+
 ## Implemented
 - BMW 335d, GLS550, and F-150 individual dashboards
 - Live charts, recent fill-ups, cost, and weighted MPG
