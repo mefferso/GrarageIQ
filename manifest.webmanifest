@@ -1,0 +1,18 @@
+{
+  "name": "GarageIQ — Fuel & Mileage",
+  "short_name": "GarageIQ",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0c1520",
+  "theme_color": "#101c29",
+  "description": "Fuel tracking and vehicle analytics synced with Google Sheets",
+  "icons": [
+    {
+      "src": "./icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
